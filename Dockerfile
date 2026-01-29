@@ -1,8 +1,5 @@
-# 1. Use Alpine for true static linking (Musl Libc)
-FROM alpine:3.21 AS builder
+FROM alpine:latest AS start
 
-# 2. Install build dependencies
-# Note: Alpine splits static libraries into "-static" packages.
 RUN apk add --no-cache \
     build-base \
     linux-headers \
@@ -14,22 +11,31 @@ RUN apk add --no-cache \
     libcap-dev \
     libcap-static \
     zlib-dev \
-    zlib-static
+    zlib-static \
+    libc++-static \
+    libltdl-static \
+    pcre2-static \
+    libtool \
+    autoconf \
+    automake \
+    bash
 
-ARG SQUID_VERSION=6.12
+ARG SQUID_VERSION=7.4
 
-# 3. Download and Extract
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 WORKDIR /src
-RUN curl -L "http://www.squid-cache.org/Versions/v6/squid-${SQUID_VERSION}.tar.gz" \
+RUN curl -L "https://github.com/squid-cache/squid/releases/download/SQUID_${SQUID_VERSION//./_}/squid-${SQUID_VERSION}.tar.gz" \
     | tar -xzf - --strip-components=1
 
-# 4. Configure and Compile
-# - We use --enable-security-cert-generators=file for the SSL helper
-# - We create the specific user/group files here to copy later
+FROM start AS builder
+
 RUN export PKG_CONFIG="pkg-config --static" && \
-    export CFLAGS="-O2 -g0 -flto=auto -pipe -static" && \
-    export CXXFLAGS="-O2 -g0 -flto=auto -pipe -static" && \
-    export LDFLAGS="-static -static-libgcc -static-libstdc++ -s -flto=auto" && \
+    export CC="gcc -no-pie -static -pipe" && \
+    export CXX="g++ -no-pie -static -pipe" && \
+    export CFLAGS="-O2 -g0 -flto=auto" && \
+    export CXXFLAGS="-O2 -g0 -flto=auto" && \
+    export LDFLAGS="-static -Wl,--no-as-needed -lcap -Wl,-Bstatic -lssl -Wl,-Bstatic -lcrypto -Wl,-Bstatic -lc -Wl,-Bstatic -static-libgcc -static-libstdc++" && \
     ./configure \
     --prefix=/usr \
     --sysconfdir=/etc/squid \
@@ -41,29 +47,26 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --disable-shared \
     --enable-static \
     --disable-dependency-tracking \
-    --disable-strict-error-checking \
     --disable-arch-native \
-    --enable-auth-basic="NCSA" \
+    --enable-auth-basic \
     --enable-auth-digest \
     --disable-auth-ntlm \
     --disable-auth-negotiate \
     --disable-external-acl-helpers \
-    --disable-url-rewrite-helpers \
-    --disable-storeid-rewrite-helpers \
+    --enable-url-rewrite-helpers \
+    --enable-storeid-rewrite-helpers \
     --disable-loadable-modules \
-    --disable-ipv6 \
-    --disable-esi \
     --enable-icmp \
     --disable-ident-lookups \
     --enable-cache-digests \
-    --disable-delay-pools \
+    --enable-delay-pools \
     --enable-wccp \
     --enable-wccpv2 \
-    --disable-snmp \
+    --enable-snmp \
     --enable-htcp \
     --enable-carp \
-    --disable-useragent-log \
-    --disable-referer-log \
+    --enable-useragent-log \
+    --enable-referer-log \
     --enable-follow-x-forwarded-for=no \
     --enable-zph-qos=no \
     --enable-eui=no \
@@ -89,37 +92,36 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     make -j$(nproc) && \
     make install-strip DESTDIR=/app
 
-# 5. Post-Processing
-# Create the proxy user/group files manually to copy to scratch
 RUN echo "proxy:x:1000:1000:proxy,,,:/nonexistent:/bin/false" > /app/passwd && \
     echo "proxy:x:1000:" > /app/group
 
-# Ensure permissions for log/cache directories exist in the /app structure
 RUN mkdir -p /app/var/log/squid /app/var/cache/squid /app/var/run && \
     chown -R 1000:1000 /app/var/log/squid /app/var/cache/squid /app/var/run
 
-# Further strip (optional, install-strip usually does enough)
-RUN strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid
+RUN strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid \
+    && mkdir /app/lib \
+    && cp /lib/ld-musl-x86_64.so.1 /app/lib/ \
+    && cd /app/lib/ && ln -s ./ld-musl-x86_64.so.1 ./libc.musl-x86_64.so.1
+
+COPY squid-init.c /src/
+
+RUN gcc -no-pie -static -pipe -O2 -o /app/usr/sbin/squid-init squid-init.c \
+    && strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid-init
 
 # --- Final Stage ---
 FROM scratch AS final
 
-# Copy the entire install tree (binaries, config, libs)
 COPY --from=builder /app/ /
-
-# Copy CA Certs (Essential for SSL bumping/verification)
+COPY squid.conf /etc/squid/squid.conf
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-# Copy User/Group definitions
 COPY --from=builder /app/passwd /etc/passwd
 COPY --from=builder /app/group /etc/group
 
-# Expose ports
+
 EXPOSE 3128
 
-# Define user (Must use ID because 'proxy' name resolution might fail in scratch without glibc NSS, though usually fine with /etc/passwd present)
 USER 1000
 
-# Entrypoint
 # Note: Initialize cache (-z) is usually needed once, but here we just run.
-ENTRYPOINT ["/usr/sbin/squid", "-N", "-f", "/etc/squid/squid.conf"]
+ENTRYPOINT ["/usr/sbin/squid-init"]
