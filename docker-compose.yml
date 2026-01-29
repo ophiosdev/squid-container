@@ -1,0 +1,12 @@
+services:
+  squid:
+    image: squid:dev
+    network_mode: host
+    volumes:
+      - squid-cache:/var/cache/squid
+    cap_add:
+      - NET_RAW
+    restart: unless-stopped
+
+volumes:
+  squid-cache:
