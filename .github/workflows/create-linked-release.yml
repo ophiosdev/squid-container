@@ -46,6 +46,10 @@ jobs:
             echo "is_valid=true" >> "$GITHUB_OUTPUT"
             # Extract matched portion (Bash stores full match in BASH_REMATCH[0])
             new_version="${BASH_REMATCH[0]}"
+            if [[ "$new_version" == SQUID_* ]]; then
+              new_version="${new_version#SQUID_}"
+              new_version="${new_version//_/.}"
+            fi
             echo "Extracted version: $new_version"
             echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
           else
