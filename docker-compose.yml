@@ -2,6 +2,8 @@ services:
   squid:
     image: squid:dev
     network_mode: host
+    container_name: squid
+    stop_grace_period: 1m
     volumes:
       - squid-cache:/var/cache/squid
     cap_add:
