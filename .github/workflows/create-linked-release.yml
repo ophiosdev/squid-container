@@ -31,6 +31,7 @@ jobs:
         id: validate_tag
         env:
           VERSION_REGEX: ${{ vars.VERSION_REGEX || '^v?[0-9]+\.[0-9]+\.[0-9]+$' }}
+          VERSION_PREFIX: ${{ vars.VERSION_PREFIX || 'SQUID_' }}
         run: |
           TAG_NAME="${{ steps.get_release_b.outputs.release }}"
 
@@ -46,9 +47,15 @@ jobs:
             echo "is_valid=true" >> "$GITHUB_OUTPUT"
             # Extract matched portion (Bash stores full match in BASH_REMATCH[0])
             new_version="${BASH_REMATCH[0]}"
-            if [[ "$new_version" == SQUID_* ]]; then
-              new_version="${new_version#SQUID_}"
-              new_version="${new_version//_/.}"
+            if [[ -n "$VERSION_PREFIX" && "$new_version" == "$VERSION_PREFIX"* ]]; then
+              new_version="${new_version#"$VERSION_PREFIX"}"
+            fi
+            new_version="${new_version//_/.}"
+            if [[ "$new_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+              IFS='.' read -r v1 v2 v3 _extra <<< "$new_version"
+              v2="${v2:-0}"
+              v3="${v3:-0}"
+              new_version="${v1}.${v2}.${v3}"
             fi
             echo "Extracted version: $new_version"
             echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
