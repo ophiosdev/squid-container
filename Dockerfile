@@ -37,7 +37,7 @@ RUN SQUID_MAJOR_VERSION="${SQUID_VERSION%%.*}" && \
     SQUID_REST="${SQUID_VERSION#${SQUID_MAJOR_VERSION}}" && \
     SQUID_REST="${SQUID_REST#.}" && \
     IFS='.' read -r SQUID_MINOR_VERSION SQUID_PATCH_VERSION _extra <<< "$SQUID_REST" && \
-    PATCH_BASE_DIR="/src/patch/v${SQUID_MAJOR_VERSION}" && \
+    PATCH_BASE_DIR="/src/patch/${SQUID_MAJOR_VERSION}" && \
     if [[ -d "$PATCH_BASE_DIR" ]]; then \
       echo "Searching patches under $PATCH_BASE_DIR" && \
       shopt -s nullglob && \
