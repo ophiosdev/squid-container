@@ -25,7 +25,10 @@ ARG SQUID_VERSION=7.4
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 WORKDIR /src
-RUN curl -L "https://github.com/squid-cache/squid/releases/download/SQUID_${SQUID_VERSION//./_}/squid-${SQUID_VERSION}.tar.gz" \
+RUN shopt -s extglob && \
+    # extglob trims any trailing ".0" segments (e.g. 7.4.0 -> 7.4, 7.0.0 -> 7)
+    SQUID_VERSION_CURL="${SQUID_VERSION%%+(.0)}" && \
+    curl -L "https://github.com/squid-cache/squid/releases/download/SQUID_${SQUID_VERSION_CURL//./_}/squid-${SQUID_VERSION_CURL}.tar.gz" \
     | tar -xzf - --strip-components=1
 
 FROM start AS builder
