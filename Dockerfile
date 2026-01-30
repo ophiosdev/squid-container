@@ -31,6 +31,22 @@ RUN shopt -s extglob && \
     curl -L "https://github.com/squid-cache/squid/releases/download/SQUID_${SQUID_VERSION_CURL//./_}/squid-${SQUID_VERSION_CURL}.tar.gz" \
     | tar -xzf - --strip-components=1
 
+COPY patch /src/patch/
+
+RUN SQUID_MAJOR_VERSION="${SQUID_VERSION%%.*}" && \
+    PATCH_DIR="/src/patch/v${SQUID_MAJOR_VERSION}" && \
+    if [[ -d "$PATCH_DIR" ]]; then \
+      echo "Applying patches from $PATCH_DIR" && \
+      shopt -s nullglob && \
+      for patch_file in "$PATCH_DIR"/*.patch; do \
+        echo "Applying patch: $(basename "$patch_file")" \
+        && patch -p1 --verbose --forward --batch < "$patch_file" || { echo "Failed to apply patch: $(basename "$patch_file")"; exit 1; }; \
+      done; \
+    else \
+      echo "No version-specific patches found for v${SQUID_MAJOR_VERSION} (missing $PATCH_DIR). Skipping."; \
+    fi
+
+
 FROM start AS builder
 
 RUN export PKG_CONFIG="pkg-config --static" && \
