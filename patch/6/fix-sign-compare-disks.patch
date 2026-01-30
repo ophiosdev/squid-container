@@ -1,0 +1,13 @@
+diff --git a/src/store/Disks.cc b/src/store/Disks.cc
+index 4e8710a..modified 100644
+--- a/src/store/Disks.cc
++++ b/src/store/Disks.cc
+@@ -58,7 +58,7 @@ SwapDir &SwapDirByIndex(const int i)
+ {
+     assert(i >= 0);
+-    assert(i < Config.cacheSwap.n_allocated);
++    assert(static_cast<unsigned int>(i) < Config.cacheSwap.n_allocated);
+     const auto sd = INDEXSD(i);
+     assert(sd);
+     return *sd;
+ }
