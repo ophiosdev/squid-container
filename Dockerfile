@@ -34,16 +34,51 @@ RUN shopt -s extglob && \
 COPY patch /src/patch/
 
 RUN SQUID_MAJOR_VERSION="${SQUID_VERSION%%.*}" && \
-    PATCH_DIR="/src/patch/v${SQUID_MAJOR_VERSION}" && \
-    if [[ -d "$PATCH_DIR" ]]; then \
-      echo "Applying patches from $PATCH_DIR" && \
+    SQUID_REST="${SQUID_VERSION#${SQUID_MAJOR_VERSION}}" && \
+    SQUID_REST="${SQUID_REST#.}" && \
+    IFS='.' read -r SQUID_MINOR_VERSION SQUID_PATCH_VERSION _extra <<< "$SQUID_REST" && \
+    PATCH_BASE_DIR="/src/patch/v${SQUID_MAJOR_VERSION}" && \
+    if [[ -d "$PATCH_BASE_DIR" ]]; then \
+      echo "Searching patches under $PATCH_BASE_DIR" && \
       shopt -s nullglob && \
-      for patch_file in "$PATCH_DIR"/*.patch; do \
-        echo "Applying patch: $(basename "$patch_file")" \
-        && patch -p1 --verbose --forward --batch < "$patch_file" || { echo "Failed to apply patch: $(basename "$patch_file")"; exit 1; }; \
-      done; \
+      declare -A selected_patches=() && \
+      collect_patches() { \
+        local dir="$1"; \
+        [[ -d "$dir" ]] || return 0; \
+        for patch_file in "$dir"/*.patch; do \
+          local base filename priority; \
+          base="$(basename "$patch_file")"; \
+          if [[ "$base" =~ ^([0-9]+)[[:space:]_](.+)$ ]]; then \
+            priority="${BASH_REMATCH[1]}"; \
+            filename="${BASH_REMATCH[2]}"; \
+          else \
+            priority="0"; \
+            filename="$base"; \
+          fi; \
+          if [[ -z "${selected_patches[$filename]}" ]]; then \
+            selected_patches["$filename"]="${priority}\t${filename}\t${patch_file}"; \
+          fi; \
+        done; \
+      }; \
+      if [[ -n "$SQUID_MINOR_VERSION" && -n "$SQUID_PATCH_VERSION" ]]; then \
+        collect_patches "$PATCH_BASE_DIR/$SQUID_MINOR_VERSION/$SQUID_PATCH_VERSION"; \
+      fi; \
+      if [[ -n "$SQUID_MINOR_VERSION" ]]; then \
+        collect_patches "$PATCH_BASE_DIR/$SQUID_MINOR_VERSION"; \
+      fi; \
+      collect_patches "$PATCH_BASE_DIR"; \
+      if [[ ${#selected_patches[@]} -gt 0 ]]; then \
+        printf "%b\n" "${selected_patches[@]}" \
+          | sort -rn -k1,1 -k2,2 \
+          | while IFS=$'\t' read -r priority filename patch_file; do \
+              echo "Applying patch: $(basename "$patch_file")"; \
+              patch -p1 --forward --batch < "$patch_file" || { echo "Failed to apply patch: $(basename "$patch_file")"; exit 1; }; \
+            done; \
+      else \
+        echo "No patches found under $PATCH_BASE_DIR. Skipping."; \
+      fi; \
     else \
-      echo "No version-specific patches found for v${SQUID_MAJOR_VERSION} (missing $PATCH_DIR). Skipping."; \
+      echo "No version-specific patches found for v${SQUID_MAJOR_VERSION} (missing $PATCH_BASE_DIR). Skipping."; \
     fi
 
 
