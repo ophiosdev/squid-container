@@ -112,7 +112,6 @@ RUN gcc -no-pie -static -pipe -O2 -o /app/usr/sbin/squid-init squid-init.c \
 FROM scratch AS final
 
 COPY --from=builder /app/ /
-COPY squid.conf /etc/squid/squid.conf
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 COPY --from=builder /app/passwd /etc/passwd
