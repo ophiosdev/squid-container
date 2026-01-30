@@ -90,22 +90,25 @@ static int run_squid_z(const char *squid, const char *conf) {
 static void print_help(const char *prog) {
     fprintf(stderr, "Usage: %s [options]\n", prog);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -b, --bin <path>    Path to squid binary\n");
-    fprintf(stderr, "  -f, --conf <path>   Path to squid config\n");
-    fprintf(stderr, "  -c, --cache <path>  Path to cache dir\n");
-    fprintf(stderr, "  -h, --help          Show this help\n");
+    fprintf(stderr, "  -b, --bin <path>      Path to squid binary\n");
+    fprintf(stderr, "  -f, --conf <path>     Path to squid config\n");
+    fprintf(stderr, "  -c, --cache <path>    Path to cache dir\n");
+    fprintf(stderr, "  -p, --pidfile <path>  Path to PID file\n");
+    fprintf(stderr, "  -h, --help            Show this help\n");
 }
 
 int main(int argc, char *argv[]) {
     const char *squid = NULL;
     const char *conf = NULL;
     const char *cache = NULL;
+    const char *pidfile = NULL;
 
     static struct option long_options[] = {
-        {"bin",   required_argument, 0, 'b'},
-        {"conf",  required_argument, 0, 'f'},
-        {"cache", required_argument, 0, 'c'},
-        {"help",  no_argument,       0, 'h'},
+        {"bin",     required_argument, 0, 'b'},
+        {"conf",    required_argument, 0, 'f'},
+        {"cache",   required_argument, 0, 'c'},
+        {"pidfile", required_argument, 0, 'p'},
+        {"help",    no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
@@ -115,6 +118,7 @@ int main(int argc, char *argv[]) {
             case 'b': squid = optarg; break;
             case 'f': conf = optarg; break;
             case 'c': cache = optarg; break;
+            case 'p': pidfile = optarg; break;
             case 'h': print_help(argv[0]); return 0;
             default: print_help(argv[0]); return 1;
         }
@@ -130,10 +134,18 @@ int main(int argc, char *argv[]) {
     if (!cache || !*cache) cache = getenv("SQUID_CACHE_DIR");
     if (!cache || !*cache) cache = "/var/cache/squid";
 
+    if (!pidfile || !*pidfile) pidfile = getenv("SQUID_PIDFILE");
+    if (!pidfile || !*pidfile) pidfile = "/var/run/squid.pid";
+
     fprintf(stderr, "squid-init: Configuration:\n");
-    fprintf(stderr, "  Binary: %s\n", squid);
-    fprintf(stderr, "  Config: %s\n", conf);
-    fprintf(stderr, "  Cache : %s\n", cache);
+    fprintf(stderr, "  Binary    : %s\n", squid);
+    fprintf(stderr, "  Config    : %s\n", conf);
+    fprintf(stderr, "  Cache     : %s\n", cache);
+    fprintf(stderr, "  PID File  : %s\n", pidfile);
+
+    if (pidfile && *pidfile) {
+        unlink(pidfile);
+    }
 
     if (access(squid, X_OK) != 0) {
         fprintf(stderr, "Error: Cannot execute %s: %s\n", squid, strerror(errno));
