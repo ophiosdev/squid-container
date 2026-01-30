@@ -33,6 +33,7 @@ Important caveats for realistic risk management:
 - `docs/` — build/config evidence and notes:
   - `docs/squid-config.md` — summarized “what was enabled/built” report derived from the log.
   - `docs/squid-config-analysis.md` — repeatable analysis notes and evidence map for the report.
+  - `docs/squid-patches.md` — patch layout, selection, and application rules during builds.
 
 ## Build and run
 
