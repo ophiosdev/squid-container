@@ -6,6 +6,7 @@ services:
     stop_grace_period: 1m
     volumes:
       - squid-cache:/var/cache/squid
+      - ./squid.conf:/etc/squid/squid.conf
     cap_add:
       - NET_RAW
     restart: unless-stopped
