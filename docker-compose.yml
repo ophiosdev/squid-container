@@ -1,6 +1,6 @@
 services:
   squid:
-    image: squid:dev
+    image: ${SQUID_CONTAINER_IMAGE:-ghcr.io/ophiosdev/squid:7}
     network_mode: host
     container_name: squid
     stop_grace_period: 1m
