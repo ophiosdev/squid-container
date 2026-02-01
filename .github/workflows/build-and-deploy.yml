@@ -87,5 +87,7 @@ jobs:
       - name: Attest SBOM (cosign)
         run: |
           # --yes avoids the interactive tlog consent prompt in CI.
-          cosign attest --yes --type spdx --predicate ./sbom.spdx.json \
+          COSIGN_EXPERIMENTAL=1 cosign attest --yes \
+            --registry-referrers-mode=oci-1-1 \
+            --type spdx --predicate ./sbom.spdx.json \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}"
