@@ -86,6 +86,6 @@ jobs:
 
       - name: Attest SBOM (cosign)
         run: |
-          set -euo pipefail
-          cosign attest --type spdx --predicate ./sbom.spdx.json \
+          # --yes avoids the interactive tlog consent prompt in CI.
+          cosign attest --yes --type spdx --predicate ./sbom.spdx.json \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}"
