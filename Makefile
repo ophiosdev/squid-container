@@ -12,6 +12,11 @@ run:
 	@echo "▶️  Starting docker compose with SQUID_CONTAINER_IMAGE=$(IMAGE)"
 	@SQUID_CONTAINER_IMAGE=$(IMAGE) $(COMPOSE) up -d && echo "✅ Started SQUID container using $(IMAGE)"
 
+sbom: build
+	docker create --name temp-squid-container $(IMAGE)
+	docker cp temp-squid-container:/sbom.spdx.json ./sbom.spdx.json
+	docker rm temp-squid-container
+
 clean:
 	@echo "🧹 Cleaning up: stopping compose and removing image/container if present"
 	-$(COMPOSE) down -v >/dev/null 2>&1 || true
