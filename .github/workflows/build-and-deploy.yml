@@ -11,6 +11,11 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ophiosdev/squid
 
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -37,11 +42,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -56,34 +56,36 @@ jobs:
           labels: |
             org.opencontainers.image.maintainer=Ophios GmbH
 
-      - name: Build image
-        id: build
+      - name: Build and push Docker image
+        id: build_and_push
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
+          push: true
           load: true
-          tags: squid:local-build
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             SQUID_VERSION=${{ steps.get_version.outputs.VERSION }}
 
       - name: Extract SBOM
         run: |
-          docker create --name temp-container squid:local-build
+          set -euo pipefail
+          tag="$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -n 1)"
+          if [ -z "$tag" ]; then
+            echo "No tags produced by metadata action." >&2
+            exit 1
+          fi
+          docker create --name temp-container "$IMAGE_TAG"
           docker cp temp-container:/sbom.spdx.json ./sbom.spdx.json
           docker rm temp-container
           ls -lh ./sbom.spdx.json
 
-      - name: Push Image with SBOM Attestation
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # This attaches the extracted file as an OCI attestation
-          attests: type=sbom,src=./sbom.spdx.json
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Attest SBOM (cosign)
+        run: |
+          set -euo pipefail
+          cosign attest --type spdx --predicate ./sbom.spdx.json \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}"
