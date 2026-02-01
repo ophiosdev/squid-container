@@ -71,8 +71,8 @@ jobs:
       - name: Extract SBOM
         run: |
           set -euo pipefail
-          tag="$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -n 1)"
-          if [ -z "$tag" ]; then
+          IMAGE_TAG="$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -n 1)"
+          if [ -z "$IMAGE_TAG" ]; then
             echo "No tags produced by metadata action." >&2
             exit 1
           fi
