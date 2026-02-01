@@ -1,11 +1,7 @@
 FROM alpine:latest AS start
 
-RUN apk add --no-cache \
-    build-base \
+ARG SBOM_PACKAGES="\
     linux-headers \
-    curl \
-    perl \
-    pkgconf \
     openssl-dev \
     openssl-libs-static \
     libcap-dev \
@@ -15,10 +11,23 @@ RUN apk add --no-cache \
     libc++-static \
     libltdl-static \
     pcre2-static \
+    nettle-dev \
+    nettle-static \
+    musl \
+    musl-dev"
+
+RUN apk add --no-cache \
+    build-base \
+    curl \
+    perl \
+    pkgconf \
     libtool \
     autoconf \
     automake \
-    bash
+    ed \
+    bash \
+    cppunit \
+    ${SBOM_PACKAGES}
 
 ARG SQUID_VERSION=7.4
 
@@ -100,8 +109,9 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --with-pidfile=/var/run/squid.pid \
     --disable-shared \
     --enable-static \
+    --enable-xmalloc-statistics \
     --disable-dependency-tracking \
-    --disable-arch-native \
+    --enable-arch-native \
     --enable-auth-basic \
     --enable-auth-digest \
     --disable-auth-ntlm \
@@ -112,6 +122,8 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --disable-loadable-modules \
     --enable-icmp \
     --disable-ident-lookups \
+    --disable-unlinkd \
+    --enable-stacktraces \
     --enable-cache-digests \
     --enable-delay-pools \
     --enable-wccp \
@@ -121,15 +133,16 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --enable-carp \
     --enable-useragent-log \
     --enable-referer-log \
-    --enable-follow-x-forwarded-for=no \
-    --enable-zph-qos=no \
-    --enable-eui=no \
+    --enable-follow-x-forwarded-for \
+    --enable-zph-qos \
+    --enable-eui \
     --enable-ssl \
-    --enable-ssl-crtd \
+    --disable-ssl-crtd \
     --enable-security-cert-generators="file" \
+    --enable-forw-via-db \
     --enable-linux-netfilter=no \
-    --enable-arp-acl=no \
-    --enable-async-io=no \
+    --enable-arp-acl \
+    --enable-async-io \
     --enable-disk-io="AIO" \
     --enable-storeio="aufs" \
     --enable-removal-policies="lru" \
@@ -162,11 +175,32 @@ COPY squid-init.c /src/
 RUN gcc -no-pie -static -pipe -O2 -o /app/usr/sbin/squid-init squid-init.c \
     && strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid-init
 
+# Create the 'Shadow Root'
+# We install ONLY the library packages here.
+# This creates a clean APK database at /sbom-root/lib/apk/db
+RUN mkdir -p /sbom-root && \
+    apk add --root /sbom-root \
+      --initdb \
+      --no-script \
+      --no-cache \
+      --repositories-file /etc/apk/repositories \
+      --keys-dir /etc/apk/keys \
+      ${SBOM_PACKAGES}
+
+# Run Syft against the Shadow Root
+# We save the result to a known location.
+RUN curl -LsS "https://raw.githubusercontent.com/anchore/syft/main/install.sh" | sh -s -- -b /usr/local/bin \
+    && syft dir:/sbom-root \
+    --output spdx-json=/app/sbom.spdx.json \
+    --source-name "squid" \
+    --source-version "${SQUID_VERSION}"
+
 # --- Final Stage ---
 FROM scratch AS final
 
 COPY --from=builder /app/ /
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /app/sbom.spdx.json /sbom.spdx.json
 
 COPY --from=builder /app/passwd /etc/passwd
 COPY --from=builder /app/group /etc/group
