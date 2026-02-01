@@ -81,13 +81,14 @@ jobs:
           docker rm temp-container
           ls -lh ./sbom.spdx.json
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
 
-      - name: Attest SBOM (cosign)
+      - name: Attach SBOM (oras)
         run: |
-          # --yes avoids the interactive tlog consent prompt in CI.
-          COSIGN_EXPERIMENTAL=1 cosign attest --yes \
-            --registry-referrers-mode=oci-1-1 \
-            --type spdx --predicate ./sbom.spdx.json \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}"
+          set -euo pipefail
+          oras attach \
+            --artifact-type application/spdx+json \
+            --distribution-spec v1.1-referrers-api \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}" \
+            ./sbom.spdx.json:application/spdx+json
