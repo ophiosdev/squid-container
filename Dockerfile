@@ -1,7 +1,8 @@
-FROM alpine:latest AS start
+ARG BUILDKIT_SBOM_SCAN_STAGE=base
+
+FROM alpine:latest AS base
 
 ARG SBOM_PACKAGES="\
-    linux-headers \
     openssl-dev \
     openssl-libs-static \
     libcap-dev \
@@ -17,6 +18,10 @@ ARG SBOM_PACKAGES="\
     musl-dev"
 
 RUN apk add --no-cache \
+    ${SBOM_PACKAGES}
+
+FROM base AS start
+RUN apk add --no-cache \
     build-base \
     curl \
     perl \
@@ -26,8 +31,8 @@ RUN apk add --no-cache \
     automake \
     ed \
     bash \
-    cppunit \
-    ${SBOM_PACKAGES}
+    linux-headers \
+    cppunit
 
 ARG SQUID_VERSION=7.4
 
@@ -157,7 +162,7 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --without-gssapi \
     --with-libcap && \
     make -j$(nproc) && \
-    make install-strip DESTDIR=/app
+    make install-strip DESTDIR=/app man8dir=
 
 RUN echo "proxy:x:1000:1000:proxy,,,:/nonexistent:/bin/false" > /app/passwd && \
     echo "proxy:x:1000:" > /app/group
@@ -175,32 +180,12 @@ COPY squid-init.c /src/
 RUN gcc -no-pie -static -pipe -O2 -o /app/usr/sbin/squid-init squid-init.c \
     && strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid-init
 
-# Create the 'Shadow Root'
-# We install ONLY the library packages here.
-# This creates a clean APK database at /sbom-root/lib/apk/db
-RUN mkdir -p /sbom-root && \
-    apk add --root /sbom-root \
-      --initdb \
-      --no-script \
-      --no-cache \
-      --repositories-file /etc/apk/repositories \
-      --keys-dir /etc/apk/keys \
-      ${SBOM_PACKAGES}
-
-# Run Syft against the Shadow Root
-# We save the result to a known location.
-RUN curl -LsS "https://raw.githubusercontent.com/anchore/syft/main/install.sh" | sh -s -- -b /usr/local/bin \
-    && syft dir:/sbom-root \
-    --output spdx-json=/app/sbom.spdx.json \
-    --source-name "squid" \
-    --source-version "${SQUID_VERSION}"
-
 # --- Final Stage ---
 FROM scratch AS final
 
 COPY --from=builder /app/ /
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=builder /app/sbom.spdx.json /sbom.spdx.json
+#COPY --from=builder /app/sbom.spdx.json /sbom.spdx.json
 
 COPY --from=builder /app/passwd /etc/passwd
 COPY --from=builder /app/group /etc/group
