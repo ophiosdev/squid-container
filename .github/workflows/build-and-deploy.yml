@@ -62,24 +62,8 @@ jobs:
         with:
           context: .
           push: true
-          load: true
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             SQUID_VERSION=${{ steps.get_version.outputs.VERSION }}
-
-      - name: Extract SBOM
-        run: |
-          docker create --name temp-container "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}"
-          docker cp temp-container:/sbom.spdx.json ./sbom.spdx.json
-          docker rm temp-container
-      - name: Install ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Attach SBOM (oras)
-        run: |
-          oras attach \
-            --artifact-type application/spdx+json \
-            --distribution-spec v1.1-referrers-api \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}" \
-            ./sbom.spdx.json:application/spdx+json
