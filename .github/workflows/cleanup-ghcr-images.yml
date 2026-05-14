@@ -12,7 +12,7 @@ on:
       retention_days:
         description: Delete images older than this many days (0 = no age limit)
         required: false
-        default: '15'
+        default: '0'
       delete_unversioned:
         description: Delete unversioned images (SHA-only or untagged)
         required: false
