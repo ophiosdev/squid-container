@@ -1,5 +1,6 @@
 ARG BUILDKIT_SBOM_SCAN_STAGE=base
 
+# hadolint ignore=DL3007
 FROM alpine:latest AS base
 
 ARG SBOM_PACKAGES="\
@@ -17,10 +18,12 @@ ARG SBOM_PACKAGES="\
     musl \
     musl-dev"
 
+# hadolint ignore=DL3018
 RUN apk add --no-cache \
     ${SBOM_PACKAGES}
 
 FROM base AS start
+# hadolint ignore=DL3018
 RUN apk add --no-cache \
     build-base \
     curl \
@@ -48,7 +51,7 @@ RUN shopt -s extglob && \
 COPY patch /src/patch/
 
 RUN SQUID_MAJOR_VERSION="${SQUID_VERSION%%.*}" && \
-    SQUID_REST="${SQUID_VERSION#${SQUID_MAJOR_VERSION}}" && \
+    SQUID_REST="${SQUID_VERSION#"${SQUID_MAJOR_VERSION}"}" && \
     SQUID_REST="${SQUID_REST#.}" && \
     IFS='.' read -r SQUID_MINOR_VERSION SQUID_PATCH_VERSION _extra <<< "$SQUID_REST" && \
     PATCH_BASE_DIR="/src/patch/${SQUID_MAJOR_VERSION}" && \
@@ -161,7 +164,7 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --without-mit-krb5 \
     --without-gssapi \
     --with-libcap && \
-    make -j$(nproc) && \
+    make -j"$(nproc)" && \
     make install-strip DESTDIR=/app man8dir=
 
 RUN echo "proxy:x:1000:1000:proxy,,,:/nonexistent:/bin/false" > /app/passwd && \
@@ -173,7 +176,7 @@ RUN mkdir -p /app/var/log/squid /app/var/cache/squid /app/var/run && \
 RUN strip --strip-all --remove-section=.comment --remove-section=.note /app/usr/sbin/squid \
     && mkdir /app/lib \
     && cp /lib/ld-musl-x86_64.so.1 /app/lib/ \
-    && cd /app/lib/ && ln -s ./ld-musl-x86_64.so.1 ./libc.musl-x86_64.so.1
+    && ln -s ./ld-musl-x86_64.so.1 /app/lib/libc.musl-x86_64.so.1
 
 COPY squid-init.c /src/
 
@@ -189,7 +192,6 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 
 COPY --from=builder /app/passwd /etc/passwd
 COPY --from=builder /app/group /etc/group
-
 
 EXPOSE 3128
 
