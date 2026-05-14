@@ -1,0 +1,337 @@
+name: Cleanup GHCR Images
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      images_to_keep:
+        description: Maximum number of tagged images to keep per major version (high water mark, 0 = no limit)
+        required: false
+        default: '4'
+      retention_days:
+        description: Delete images older than this many days (0 = no age limit)
+        required: false
+        default: '15'
+      delete_unversioned:
+        description: Delete unversioned images (SHA-only or untagged)
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: Log deletions without removing image versions
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+env:
+  PACKAGE_NAME: squid
+  IMAGES_TO_KEEP: ${{ inputs.images_to_keep || vars.GHCR_IMAGES_TO_KEEP }}
+  RETENTION_DAYS: ${{ inputs.retention_days || vars.GHCR_RETENTION_DAYS }}
+  DELETE_UNVERSIONED: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_unversioned || vars.GHCR_DELETE_UNVERSIONED || 'true' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup container versions
+        id: cleanup
+        uses: actions/github-script@v9
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
+          RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+          DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
+          DRY_RUN: ${{ env.DRY_RUN }}
+        with:
+          result-encoding: string
+          script: |
+            const owner = context.repo.owner;
+            const packageType = 'container';
+            const packageName = process.env.PACKAGE_NAME;
+            const imagesToKeep = Number(process.env.IMAGES_TO_KEEP || 0);
+            const retentionDays = Number(process.env.RETENTION_DAYS || 0);
+            const deleteUnversioned = process.env.DELETE_UNVERSIONED === 'true';
+            const dryRun = process.env.DRY_RUN === 'true';
+            const cutoff = retentionDays > 0 ? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000) : null;
+
+            if (!Number.isFinite(imagesToKeep) || imagesToKeep < 0) {
+              throw new Error(`IMAGES_TO_KEEP must be a non-negative number, received: ${process.env.IMAGES_TO_KEEP}`);
+            }
+
+            if (!Number.isFinite(retentionDays) || retentionDays < 0) {
+              throw new Error(`RETENTION_DAYS must be a non-negative number, received: ${process.env.RETENTION_DAYS}`);
+            }
+
+            const paginateVersions = async () => {
+              try {
+                return {
+                  scope: 'org',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      org: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                return {
+                  scope: 'user',
+                  versions: await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+                    {
+                      package_type: packageType,
+                      package_name: packageName,
+                      username: owner,
+                      per_page: 100,
+                    },
+                  ),
+                };
+              }
+            };
+
+            const deleteVersion = async (scope, versionId) => {
+              if (scope === 'org') {
+                await github.rest.packages.deletePackageVersionForOrg({
+                  package_type: packageType,
+                  package_name: packageName,
+                  org: owner,
+                  package_version_id: versionId,
+                });
+                return;
+              }
+
+              await github.rest.packages.deletePackageVersionForUser({
+                package_type: packageType,
+                package_name: packageName,
+                username: owner,
+                package_version_id: versionId,
+              });
+            };
+
+            const isShaTag = (value) => /^sha-[0-9a-f]{7,}$/i.test(value);
+            const isUnversioned = (version) => {
+              const tags = version.metadata?.container?.tags ?? [];
+              return tags.length === 0 || tags.every(isShaTag);
+            };
+            const isTagged = (version) => {
+              const tags = version.metadata?.container?.tags ?? [];
+              return tags.length > 0 && !tags.every(isShaTag);
+            };
+
+            // Semantic version handling
+            const specialTags = new Set(['latest', 'stable', 'next', 'canary', 'edge', 'dev', 'alpha', 'beta', 'rc', 'release']);
+            const semverPattern = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-._]?(.+))?$/;
+
+            const parseSemver = (tag) => {
+              const match = tag.match(semverPattern);
+              if (!match) return null;
+              return {
+                major: parseInt(match[1], 10),
+                minor: match[2] !== undefined ? parseInt(match[2], 10) : 0,
+                patch: match[3] !== undefined ? parseInt(match[3], 10) : 0,
+                prerelease: match[4] || null,
+                original: tag
+              };
+            };
+
+            const compareSemver = (a, b) => {
+              if (a.major !== b.major) return a.major - b.major;
+              if (a.minor !== b.minor) return a.minor - b.minor;
+              if (a.patch !== b.patch) return a.patch - b.patch;
+              if (a.prerelease && !b.prerelease) return -1;
+              if (!a.prerelease && b.prerelease) return 1;
+              if (a.prerelease && b.prerelease) return a.prerelease.localeCompare(b.prerelease);
+              return 0;
+            };
+
+            const extractSemver = (version) => {
+              const tags = version.metadata?.container?.tags ?? [];
+              const semverTags = tags
+                .filter(tag => !isShaTag(tag) && !specialTags.has(tag.toLowerCase()))
+                .map(parseSemver)
+                .filter(Boolean)
+                .sort((a, b) => compareSemver(b, a));
+              return semverTags[0] || null;
+            };
+
+            const getMajorGroup = (version) => {
+              const semver = extractSemver(version);
+              return semver ? String(semver.major) : 'unclassified';
+            };
+
+            const { scope, versions } = await paginateVersions();
+            core.info(`Found ${versions.length} total versions`);
+
+            // Sort by semantic version DESC, then by updated_at DESC as tiebreaker
+            const sortedVersions = [...versions].sort((left, right) => {
+              const leftSemver = extractSemver(left);
+              const rightSemver = extractSemver(right);
+
+              if (leftSemver && rightSemver) {
+                const cmp = compareSemver(rightSemver, leftSemver);
+                if (cmp !== 0) return cmp;
+              } else if (leftSemver && !rightSemver) {
+                return -1;
+              } else if (!leftSemver && rightSemver) {
+                return 1;
+              }
+              return new Date(right.updated_at) - new Date(left.updated_at);
+            });
+
+            // Separate unversioned (SHA-only or untagged) from properly tagged versions
+            const unversionedVersions = sortedVersions.filter(isUnversioned);
+            const taggedVersions = sortedVersions.filter(isTagged);
+
+            core.info(`${unversionedVersions.length} unversioned versions (SHA-only or untagged)`);
+            core.info(`${taggedVersions.length} tagged versions to evaluate for retention`);
+
+            // Apply retention filter to tagged versions
+            let candidates = taggedVersions;
+            if (retentionDays > 0) {
+              candidates = taggedVersions.filter(v => new Date(v.updated_at) >= cutoff);
+              core.info(`Retention filter: ${candidates.length} of ${taggedVersions.length} versions within ${retentionDays} days`);
+            }
+
+            // Apply count cap per detected major version.
+            if (imagesToKeep > 0) {
+              const groupedCandidates = new Map();
+              for (const version of candidates) {
+                const majorGroup = getMajorGroup(version);
+                if (!groupedCandidates.has(majorGroup)) {
+                  groupedCandidates.set(majorGroup, []);
+                }
+                groupedCandidates.get(majorGroup).push(version);
+              }
+
+              const limitedCandidates = [];
+              for (const [majorGroup, versionsForMajor] of groupedCandidates.entries()) {
+                const keptForMajor = versionsForMajor.slice(0, imagesToKeep);
+                limitedCandidates.push(...keptForMajor);
+                core.info(`Count cap: keeping ${keptForMajor.length} version(s) for major ${majorGroup}`);
+              }
+
+              candidates = limitedCandidates;
+            }
+
+            // Safety: ensure at least 1 tagged image
+            if (candidates.length === 0 && taggedVersions.length > 0) {
+              candidates.push(taggedVersions[0]);
+              core.info(`Safety: added newest tagged version ${taggedVersions[0].id} to ensure minimum of 1 tagged image`);
+            }
+
+            // Build set of IDs to keep
+            const keepIds = new Set(candidates.map(v => v.id));
+            core.info(`Will keep ${keepIds.size} tagged versions`);
+
+            // Process all versions
+            let unversionedDeleted = 0;
+            let ageBasedDeleted = 0;
+            let retainedCount = 0;
+
+            core.info('');
+            core.info('=== Unversioned (SHA-only or untagged) ===');
+            if (unversionedVersions.length === 0) {
+              core.info('None found.');
+            } else if (deleteUnversioned) {
+              for (const version of unversionedVersions) {
+                const tags = version.metadata?.container?.tags ?? [];
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'}`);
+                if (!dryRun) {
+                  await deleteVersion(scope, version.id);
+                }
+                unversionedDeleted += 1;
+              }
+            } else {
+              for (const version of unversionedVersions) {
+                const tags = version.metadata?.container?.tags ?? [];
+                core.info(`Keeping unversioned version ${version.id} with tags: ${tags.join(', ') || '(none)'} (DELETE_UNVERSIONED is false)`);
+              }
+            }
+
+            core.info('');
+            core.info('=== Tagged versions ===');
+            for (const version of taggedVersions) {
+              const tags = version.metadata?.container?.tags ?? [];
+              if (keepIds.has(version.id)) {
+                core.info(`Keeping version ${version.id} with tags: ${tags.join(', ')}`);
+                retainedCount += 1;
+              } else {
+                core.info(`${dryRun ? '[DRY RUN] Would delete' : 'Deleting'} version ${version.id} with tags: ${tags.join(', ')}`);
+                if (!dryRun) {
+                  await deleteVersion(scope, version.id);
+                }
+                ageBasedDeleted += 1;
+              }
+            }
+
+            core.info('');
+            core.info('=== Summary ===');
+            if (deleteUnversioned) {
+              core.info(`Unversioned deleted: ${unversionedDeleted}`);
+            }
+            core.info(`Age/count-based deleted: ${ageBasedDeleted}`);
+            core.info(`Retained: ${retainedCount} (all tagged)`);
+
+            return JSON.stringify({
+              totalBefore: versions.length,
+              unversionedDeleted,
+              ageBasedDeleted,
+              retainedCount,
+            });
+
+      - name: Generate cleanup report
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          CLEANUP_RESULT: ${{ steps.cleanup.outputs.result }}
+          DELETE_UNVERSIONED: ${{ env.DELETE_UNVERSIONED }}
+          DRY_RUN: ${{ env.DRY_RUN }}
+          IMAGES_TO_KEEP: ${{ env.IMAGES_TO_KEEP }}
+          RETENTION_DAYS: ${{ env.RETENTION_DAYS }}
+        with:
+          script: |
+            const dryRun = process.env.DRY_RUN === 'true';
+            const deleteUnversioned = process.env.DELETE_UNVERSIONED === 'true';
+            const imagesToKeep = process.env.IMAGES_TO_KEEP || '0';
+            const retentionDays = process.env.RETENTION_DAYS || '0';
+
+            let summary = '## 🧹 GHCR Cleanup Report\n\n';
+
+            if (dryRun) {
+              summary += '> ⚠️ **Dry run mode** - no images were actually deleted\n\n';
+            }
+
+            summary += '### Configuration\n';
+            summary += '| Setting | Value |\n';
+            summary += '|---------|-------|\n';
+            summary += `| Images to keep per major | ${imagesToKeep} |\n`;
+            summary += `| Retention days | ${retentionDays} |\n`;
+            summary += `| Delete unversioned | ${deleteUnversioned} |\n\n`;
+
+            const result = process.env.CLEANUP_RESULT;
+            if (result && result !== 'null') {
+              const data = JSON.parse(result);
+              summary += '### Summary\n';
+              summary += '| Metric | Count |\n';
+              summary += '|--------|-------|\n';
+              summary += `| Total versions before | ${data.totalBefore || 0} |\n`;
+              if (deleteUnversioned) {
+                summary += `| Unversioned deleted | ${data.unversionedDeleted || 0} |\n`;
+              }
+              summary += `| Age/count-based deleted | ${data.ageBasedDeleted || 0} |\n`;
+              summary += `| **Retained tagged images** | **${data.retainedCount || 0}** |\n`;
+            }
+
+            core.summary.addRaw(summary).write();
