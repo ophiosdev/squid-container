@@ -224,11 +224,11 @@ jobs:
                 ['Already current', String(skippedTags.length)],
               ])
               .addHeading('Updated Tags', 2)
-              .addRaw(`${renderTagRows(updatedTags, 'No tags were updated.')}`)
+              .addRaw(`\n${renderTagRows(updatedTags, 'No tags were updated.')}\n`)
               .addHeading('Already Current', 2)
-              .addRaw(`${renderTagRows(skippedTags, 'No tags already pointed at target commit.')}`)
+              .addRaw(`\n${renderTagRows(skippedTags, 'No tags already pointed at target commit.')}\n`)
               .addHeading('Failed Updates', 2)
-              .addRaw(`${renderFailedRows()}`)
+              .addRaw(`\n${renderFailedRows()}\n`)
               .write();
 
             if (failedTags.length > 0) {
