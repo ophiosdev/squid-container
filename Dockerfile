@@ -37,7 +37,7 @@ RUN apk add --no-cache \
     linux-headers \
     cppunit
 
-ARG SQUID_VERSION=7.4
+ARG SQUID_VERSION=7.5
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -104,8 +104,8 @@ FROM start AS builder
 RUN export PKG_CONFIG="pkg-config --static" && \
     export CC="gcc -no-pie -static -pipe" && \
     export CXX="g++ -no-pie -static -pipe" && \
-    export CFLAGS="-O2 -g0 -flto=auto" && \
-    export CXXFLAGS="-O2 -g0 -flto=auto" && \
+    export CFLAGS="-O2 -g0 -flto=auto -march=x86-64 -mtune=generic" && \
+    export CXXFLAGS="-O2 -g0 -flto=auto -march=x86-64 -mtune=generic" && \
     export LDFLAGS="-static -Wl,--no-as-needed -lcap -Wl,-Bstatic -lssl -Wl,-Bstatic -lcrypto -Wl,-Bstatic -lc -Wl,-Bstatic -static-libgcc -static-libstdc++" && \
     ./configure \
     --prefix=/usr \
@@ -119,7 +119,6 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --enable-static \
     --enable-xmalloc-statistics \
     --disable-dependency-tracking \
-    --enable-arch-native \
     --enable-auth-basic \
     --enable-auth-digest \
     --disable-auth-ntlm \
