@@ -164,7 +164,9 @@ RUN export PKG_CONFIG="pkg-config --static" && \
     --without-gssapi \
     --with-libcap && \
     make -j"$(nproc)" && \
-    make install-strip DESTDIR=/app man8dir=
+    make install-strip DESTDIR=/app man8dir= && \
+    chown 0:0 /app/usr/lib/squid/pinger && \
+    chmod 4755 /app/usr/lib/squid/pinger
 
 RUN echo "proxy:x:1000:1000:proxy,,,:/nonexistent:/bin/false" > /app/passwd && \
     echo "proxy:x:1000:" > /app/group
